@@ -2,11 +2,13 @@ package repository
 
 import (
 	"database/sql"
+	"fmt"
 	"jukeBE/internal/model"
+	"strings"
 )
 
 type EmployeeRepository interface {
-	GetAll() ([]*model.Employee, error)
+	GetAll(params model.PaginationQuery) ([]*model.Employee, int, error)
 	GetByID(id int64) (*model.Employee, error)
 	Create(employee *model.Employee) error
 	Update(employee *model.Employee) error
@@ -22,11 +24,71 @@ func NewEmployeeRepository(db *sql.DB) EmployeeRepository {
 	return &postgresEmployeeRepository{DB: db}
 }
 
-func (r *postgresEmployeeRepository) GetAll() ([]*model.Employee, error) {
-	query := `SELECT id, name, email, position, salary, profile_picture, created_at FROM employees`
-	rows, err := r.DB.Query(query)
+func (r *postgresEmployeeRepository) GetAll(params model.PaginationQuery) ([]*model.Employee, int, error) {
+	var conditions []string
+	var args []interface{}
+	argID := 1
+
+	// Filter by Position
+	if params.Position != "" {
+		conditions = append(conditions, fmt.Sprintf("position = $%d", argID))
+		args = append(args, params.Position)
+		argID++
+	}
+
+	// Search
+	if params.Search != "" {
+		searchPattern := "%" + params.Search + "%"
+		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR email ILIKE $%d)", argID, argID+1))
+		args = append(args, searchPattern, searchPattern)
+		argID += 2
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Count Total
+	countQuery := "SELECT COUNT(*) FROM employees" + whereClause
+	var total int
+	err := r.DB.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+
+	// Sorting
+	sortMap := map[string]string{
+		"name":       "name",
+		"salary":     "salary",
+		"created_at": "created_at",
+		"id":         "id",
+	}
+	sortBy, ok := sortMap[strings.ToLower(params.SortBy)]
+	if !ok {
+		sortBy = "created_at"
+	}
+	sortOrder := "DESC"
+	if strings.ToUpper(params.SortOrder) == "ASC" {
+		sortOrder = "ASC"
+	}
+
+	// Pagination
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	offset := (params.Page - 1) * limit
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := fmt.Sprintf(`SELECT id, name, email, position, salary, profile_picture, created_at FROM employees%s ORDER BY %s %s LIMIT $%d OFFSET $%d`, whereClause, sortBy, sortOrder, argID, argID+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.DB.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -34,11 +96,11 @@ func (r *postgresEmployeeRepository) GetAll() ([]*model.Employee, error) {
 	for rows.Next() {
 		e := &model.Employee{}
 		if err := rows.Scan(&e.ID, &e.Name, &e.Email, &e.Position, &e.Salary, &e.ProfilePicture, &e.CreatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		employees = append(employees, e)
 	}
-	return employees, nil
+	return employees, total, nil
 }
 
 func (r *postgresEmployeeRepository) GetByID(id int64) (*model.Employee, error) {

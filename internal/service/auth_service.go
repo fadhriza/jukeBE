@@ -8,6 +8,7 @@ import (
 
 type AuthService interface {
 	Login(email, password string) (*model.Admin, error)
+	ValidateCredentials(username, password string) bool
 }
 
 type authService struct {
@@ -30,4 +31,14 @@ func (s *authService) Login(email, password string) (*model.Admin, error) {
 	}
 
 	return admin, nil
+}
+
+func (s *authService) ValidateCredentials(username, password string) bool {
+	admin, err := s.adminRepo.GetByEmail(username)
+	if err != nil {
+		return false
+	}
+
+	// In a real app, verify hash. checking plain text for this simple auth task
+	return admin.Password == password
 }

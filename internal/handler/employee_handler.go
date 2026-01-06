@@ -18,7 +18,28 @@ func NewEmployeeHandler(s service.EmployeeService) *EmployeeHandler {
 }
 
 func (h *EmployeeHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	employees, err := h.Service.GetAllEmployees()
+	query := r.URL.Query()
+
+	page, _ := strconv.Atoi(query.Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	if limit <= 0 {
+		limit = 10
+	}
+
+	params := model.PaginationQuery{
+		Page:      page,
+		Limit:     limit,
+		SortBy:    query.Get("sort_by"),
+		SortOrder: query.Get("sort_order"),
+		Search:    query.Get("search"),
+		Position:  query.Get("position"),
+	}
+
+	employees, err := h.Service.GetAllEmployees(params)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
